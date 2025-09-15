@@ -15,20 +15,34 @@ func NextDate(now time.Time, dstart string, repeat string) (string, error) {
 		return "", errors.New("empty repeat rule")
 	}
 
+	// Парсим дату начала
 	date, err := time.Parse(dateFormat, dstart)
 	if err != nil {
 		return "", errors.New("invalid date format")
 	}
 
+	// Разбиваем правило повторения
 	parts := strings.Fields(repeat)
-	if len(parts) != 2 {
+	if len(parts) == 0 {
 		return "", errors.New("invalid repeat format")
 	}
 
 	unit := parts[0]
-	n, err := strconv.Atoi(parts[1])
-	if err != nil || n <= 0 {
-		return "", errors.New("invalid repeat number")
+	n := 0
+	if unit != "y" {
+		if len(parts) != 2 {
+			return "", errors.New("invalid repeat format")
+		}
+		n, err = strconv.Atoi(parts[1])
+		if err != nil {
+			return "", errors.New("invalid repeat number")
+		}
+		if unit == "d" && (n <= 0 || n > 400) {
+			return "", errors.New("days must be between 1 and 400")
+		}
+		if n <= 0 {
+			return "", errors.New("invalid repeat number")
+		}
 	}
 
 	result := date
@@ -48,8 +62,16 @@ func NextDate(now time.Time, dstart string, repeat string) (string, error) {
 			result = result.AddDate(0, n, 0)
 		}
 	case "y":
+		// По умолчанию шаг = 1 год
+		step := 1
+		if len(parts) == 2 {
+			step, err = strconv.Atoi(parts[1])
+			if err != nil || step <= 0 {
+				return "", errors.New("invalid years number")
+			}
+		}
 		for !result.After(now) {
-			result = result.AddDate(n, 0, 0)
+			result = result.AddDate(step, 0, 0)
 		}
 	default:
 		return "", errors.New("unsupported repeat unit")
