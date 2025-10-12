@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Aidajy111/go-final-project-main/pkg/db"
@@ -129,32 +131,28 @@ func updateTaskHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{})
 }
 func isValidRepeatRule(repeat string) bool {
-	if repeat == "" {
+	r := strings.Fields(strings.TrimSpace(repeat))
+	if len(r) == 0 {
 		return true
 	}
-
-	// Проверяем базовые форматы: d X, y X, w X, m X
-	if len(repeat) < 2 {
+	if r[0] == "y" {
+		if len(r) == 1 {
+			return true
+		}
+		if len(r) == 2 {
+			n, err := strconv.Atoi(r[1])
+			return err == nil && n > 0
+		}
 		return false
 	}
-
-	// Простая проверка - более сложная логика должна быть в NextDate
-	switch repeat[0] {
-	case 'd', 'y', 'w', 'm':
-		// Должен быть пробел и число после него
-		if len(repeat) < 3 || repeat[1] != ' ' {
+	if len(r) == 2 && (r[0] == "d" || r[0] == "w" || r[0] == "m") {
+		n, err := strconv.Atoi(r[1])
+		if r[0] == "d" && (err != nil || n <= 0 || n > 400) {
 			return false
 		}
-		// Проверяем что после пробела число
-		for _, char := range repeat[2:] {
-			if char < '0' || char > '9' {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
+		return err == nil && n > 0
 	}
+	return false
 }
 
 type taskResponse struct {
@@ -186,32 +184,39 @@ func addTaskHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	currentDate := now.Format(dateFormat)
-
-	// Если дата не указана — ставим сегодняшнюю
+	todayStr := now.In(time.Local).Format(dateFormat)
 	if task.Date == "" {
-		task.Date = currentDate
+		task.Date = todayStr
 	}
 
-	// Валидация формата даты
-	_, err := time.Parse(dateFormat, task.Date)
+	// валидируем формат даты
+	t, err := time.Parse(dateFormat, task.Date)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, taskResponse{Error: "invalid date format"})
 		return
 	}
+	// нормализуем "сегодня" к полуночи по локали
+	today, _ := time.Parse(dateFormat, todayStr)
 
-	// Если правило повторения указано — просто валидируем его,
-	// но НЕ меняем task.Date на nextDate.
-	if task.Repeat != "" {
-		if _, err := NextDate(now, task.Date, task.Repeat); err != nil {
-			writeJSON(w, http.StatusBadRequest, taskResponse{Error: err.Error()})
-			return
+	if t.Before(today) {
+		// дата в прошлом
+		if strings.TrimSpace(task.Repeat) == "" {
+			task.Date = todayStr
+		} else {
+			next, err := NextDate(now, task.Date, task.Repeat)
+			if err != nil {
+				writeJSON(w, http.StatusOK, taskResponse{Error: err.Error()})
+				return
+			}
+			task.Date = next
 		}
 	} else {
-		// Для одноразовой задачи: если дата в прошлом — поставить today
-		taskTime, _ := time.Parse(dateFormat, task.Date)
-		if taskTime.Before(now) {
-			task.Date = currentDate
+		// дата не в прошлом — просто валидируем правило, если оно указано
+		if strings.TrimSpace(task.Repeat) != "" {
+			if _, err := NextDate(now, task.Date, task.Repeat); err != nil {
+				writeJSON(w, http.StatusOK, taskResponse{Error: err.Error()})
+				return
+			}
 		}
 	}
 
